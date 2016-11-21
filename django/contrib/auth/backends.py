@@ -32,18 +32,35 @@ class ModelBackend(object):
             if user_obj.is_superuser:
                 perms = Permission.objects.all()
             else:
-                user_groups_field = get_user_model()._meta.get_field('groups')
-                user_groups_query = 'group__%s' % user_groups_field.related_query_name()
-                perms = Permission.objects.filter(**{user_groups_query: user_obj})
-            perms = perms.values_list('content_type__app_label', 'codename').order_by()
-            user_obj._group_perm_cache = set(["%s.%s" % (ct, name) for ct, name in perms])
+                # jackie
+                # user_groups_field = get_user_model()._meta.get_field('groups')
+                # user_groups_query = 'group__%s' % user_groups_field.related_query_name()
+                # perms = Permission.objects.filter(**{user_groups_query: user_obj})
+                group_ids = user_obj.groups.through.objects.filter(user=user_obj).values_list('group_id', flat=True)
+                from django.contrib.auth.models import Group
+                perm_ids = Group.permissions.through.objects.filter(
+                    group__in=list(group_ids)).values_list('permission_id', flat=True)
+                perms = Permission.objects.filter(pk__in=list(perm_ids))
+            # perms = perms.values_list('content_type__app_label', 'codename').order_by()
+            # user_obj._group_perm_cache = set(["%s.%s" % (ct, name) for ct, name in perms])
+            user_obj._group_perm_cache = set(
+                ["%s.%s" % (p.content_type.app_label, p.codename)
+                 for p in perms]
+            )
         return user_obj._group_perm_cache
 
     def get_all_permissions(self, user_obj, obj=None):
         if user_obj.is_anonymous() or obj is not None:
             return set()
         if not hasattr(user_obj, '_perm_cache'):
-            user_obj._perm_cache = set(["%s.%s" % (p.content_type.app_label, p.codename) for p in user_obj.user_permissions.select_related()])
+            # jackie
+            # user_obj._perm_cache = set(
+            #     ["%s.%s" % (p.content_type.app_label, p.codename) for p in user_obj.user_permissions.select_related()])
+            perm_ids = user_obj.user_permissions.through.objects.filter(user=user_obj).values_list('permission_id')
+            user_obj._perm_cache = set(
+                ["%s.%s" % (p.content_type.app_label, p.codename)
+                 for p in Permission.objects.filter(pk__in=list(perm_ids))]
+            )
             user_obj._perm_cache.update(self.get_group_permissions(user_obj))
         return user_obj._perm_cache
 
@@ -134,3 +151,4 @@ class RemoteUserBackend(ModelBackend):
         By default, returns the user unmodified.
         """
         return user
+
